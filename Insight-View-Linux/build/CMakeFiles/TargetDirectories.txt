@@ -1,6 +1,0 @@
-/home/lean/digua/uvc-viewer-Linux/build/CMakeFiles/Insight_Viewer.dir
-/home/lean/digua/uvc-viewer-Linux/build/CMakeFiles/edit_cache.dir
-/home/lean/digua/uvc-viewer-Linux/build/CMakeFiles/rebuild_cache.dir
-/home/lean/digua/uvc-viewer-Linux/build/third_party/imgui/CMakeFiles/imgui.dir
-/home/lean/digua/uvc-viewer-Linux/build/third_party/imgui/CMakeFiles/edit_cache.dir
-/home/lean/digua/uvc-viewer-Linux/build/third_party/imgui/CMakeFiles/rebuild_cache.dir
