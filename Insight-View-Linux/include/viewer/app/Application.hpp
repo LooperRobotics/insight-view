@@ -9,8 +9,9 @@
 #include <mutex>
 #include "viewer/app/Config.hpp"
 #include "viewer/video/IFrameSource.hpp"
-#include "viewer/sensor/IHidSensor.hpp"
+#include "viewer/video/UvcExtensionUnit.hpp"
 #include "viewer/video/Frame.hpp"
+#include "viewer/sensor/IHidSensor.hpp"
 #include "viewer/sensor/ImuSample.hpp"
 #include "viewer/sensor/VioSample.hpp"
 
@@ -92,7 +93,7 @@ namespace viewer {
             LayoutRect rightGrey  = {0.0f, 370.0f, 295.0f, 345.0f};
             LayoutRect rgb        = {295.0f, 25.0f, 340.0f, 600.0f};
             LayoutRect depth      = {635.0f, 25.0f, 295.0f, 345.0f};
-            LayoutRect sensor     = {295.0f, 625.0f, 800.0f, 100.0f};
+            LayoutRect sensor     = {295.0f, 625.0f, 800.0f, 90.0f};
             LayoutRect config     = {930.0f, 25.0f, 350.0f, 690.0f};
             LayoutRect settings   = {0.0f, 25.0f, 1280.0f, 690.0f};
             LayoutRect log        = {0.0f, 405.0f, 1280.0f, 315.0f};
@@ -107,6 +108,7 @@ namespace viewer {
         std::vector<uint8_t> rotated_grey_scratch_;
         std::vector<std::chrono::steady_clock::time_point> last_video_frame_times_;
         std::unique_ptr<UvcExtensionUnit> xu_controller_;
+        std::vector<camera_params> initial_params_;
         std::string xu_device_path_;
         bool xu_available_ = false;
         bool show_toast = false;
@@ -118,7 +120,7 @@ namespace viewer {
         // UI显示管理
         bool show_video_window_ = true;
         bool show_sensor_window_ = true;
-        bool show_config_ = false;
+        bool show_config_ = true;
         bool show_settings_ = false;
         bool show_depth_window_ = true;
         bool show_log_window_ = false;
@@ -141,6 +143,10 @@ namespace viewer {
         void saveSettings();
         void loadSettings();
         bool initializeXuController();
+        void saveInitialCameraParams();
+        void restoreInitialCameraParams();
+        bool resetCameraParams(uint8_t cam_id);
+        bool ensureXuAvailable();
         void ShowToast();
     };
 } // namespace viewer

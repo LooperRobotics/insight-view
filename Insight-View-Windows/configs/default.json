@@ -1,9 +1,9 @@
 {
   "app": {"name": "Insight 9 Viewer", "enable_docking": true, "enable_viewports": true, "vsync": true},
   "video": {"streams": [
-    {"id": "cam0", "mode": "uvc", "vid": 7531, "interface":4, "pid": 260, "width": 1088, "height": 1920, "fps": 2, "format": "MJPEG"},
-    {"id": "cam1", "mode": "uvc", "vid": 7531, "interface":6, "pid": 260, "width": 544, "height": 1281, "fps": 2, "format": "GREY"},
-    {"id": "cam2", "mode": "uvc", "vid": 7531, "interface":8, "pid": 260, "width": 544, "height": 642, "fps": 2, "format": "Z16"}
+    {"id": "cam0", "mode": "uvc", "vid": 7531, "interface":4, "pid": 260, "width": 1088, "height": 1920, "fps": 30, "format": "MJPEG"},
+    {"id": "cam1", "mode": "uvc", "vid": 7531, "interface":6, "pid": 260, "width": 544, "height": 1281, "fps": 30, "format": "GREY"},
+    {"id": "cam2", "mode": "uvc", "vid": 7531, "interface":8, "pid": 260, "width": 544, "height": 642, "fps": 30, "format": "Z16"}
   ]},
   "sensor": {"mode": "hid", "vid": 7531, "pid": 260, "imu_interface": 0, "vio_interface": 1, "imu_hz": 400, "vio_hz": 30}
 }

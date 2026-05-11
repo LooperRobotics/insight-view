@@ -553,9 +553,8 @@ namespace viewer {
                     } else {
                         addLog("[Reconnect] SDK restarted successfully\n");
                         last_frame_time_ = std::chrono::steady_clock::now();
-                        if (!xu_available_) {
-                            initializeXuController();
-                        }
+                        xu_controller_.reset();
+                    initializeXuController();
                     }
                 }
             }
@@ -601,6 +600,9 @@ namespace viewer {
 
     void Application::shutdown() {
         running_ = false;
+
+        restoreInitialCameraParams();
+
         insight9_receive_stop();
         insight9_receive_cleanup();
 
@@ -632,6 +634,19 @@ namespace viewer {
         SDL_Quit();
     }
 
+    bool Application::ensureXuAvailable() {
+        if (xu_controller_) {
+            uint8_t dummy;
+            if (xu_controller_->getActiveCamera(dummy)) {
+                return true;
+            }
+            addLog("[XU] XU device appears disconnected, reinitializing...\n");
+            xu_controller_->close();
+            xu_controller_.reset();
+        }
+        return initializeXuController();
+    }
+
     bool Application::initializeXuController() {
         xu_device_path_ = resolveXuDevicePath(config_);
         xu_available_ = false;
@@ -651,7 +666,73 @@ namespace viewer {
         xu_available_ = true;
         xu_controller_ = std::move(controller);
         printf("XU control ready on %s\n", xu_device_path_.c_str());
+
+        saveInitialCameraParams();
+
         return true;
+    }
+
+    void Application::saveInitialCameraParams() {
+        if (!xu_controller_ || !xu_controller_->isOpen()) {
+            printf("Cannot save initial params: XU not available\n");
+            return;
+        }
+
+        // 需要保存的摄像头 ID 列表（0 = RGB, 1 = 灰度双目）
+        const std::vector<uint8_t> cam_ids = {0, 1};
+        initial_params_.clear();
+        initial_params_.resize(3);  // 索引 0,1,2，2 暂不使用
+
+        for (uint8_t cam_id : cam_ids) {
+            camera_params params;
+            if (xu_controller_->readCameraParams(cam_id, params)) {
+                initial_params_[cam_id] = params;
+                addLog("[Init] Saved initial params for camera %d\n", cam_id);
+                printParams(params);
+            } else {
+                addLog("[Init] Failed to read initial params for camera %d\n", cam_id);
+            }
+        }
+    }
+
+    bool Application::resetCameraParams(uint8_t cam_id) {
+        if (!ensureXuAvailable()) {
+            addLog("[Reset] XU not available\n");
+            return false;
+        }
+        
+        if (!xu_controller_ || !xu_controller_->isOpen()) {
+            addLog("[Reset] XU not available\n");
+            return false;
+        }
+        if (cam_id >= initial_params_.size() || initial_params_[cam_id].cam_id != cam_id) {
+            addLog("[Reset] No saved initial params for camera %d\n", cam_id);
+            return false;
+        }
+
+        const camera_params& params = initial_params_[cam_id];
+        if (xu_controller_->writeCameraParams(cam_id, params)) {
+            addLog("[Reset] Camera %d restored to initial values\n", cam_id);
+            return true;
+        }
+        return false;
+    }
+
+    void Application::restoreInitialCameraParams() {
+        if (!xu_controller_ || !xu_controller_->isOpen()) {
+            addLog("[Restore] XU not available, cannot restore initial params\n");
+            return;
+        }
+
+        for (uint8_t cam_id = 0; cam_id < initial_params_.size(); ++cam_id) {
+            if (initial_params_[cam_id].cam_id == cam_id) {
+                if (xu_controller_->writeCameraParams(cam_id, initial_params_[cam_id])) {
+                    addLog("[Restore] Restored initial params for camera %d\n", cam_id);
+                } else {
+                    addLog("[Restore] Failed to restore camera %d\n", cam_id);
+                }
+            }
+        }
     }
 
     void Application::onImage(int cam_id, uint8_t* data, size_t size,
@@ -1208,13 +1289,51 @@ namespace viewer {
             // }
             // popHeaderColor();
 
-            // 按钮
-            if (ImGui::Button("Apply", ImVec2(120, 0))) {
+            // 底部按钮栏
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            float avail_width = ImGui::GetContentRegionAvail().x;
+            float btn_width = 125.0f;
+            float btn_spacing = 12.0f;
+            float offset_x = avail_width - btn_width * 3 - btn_spacing * 2;
+            if (offset_x > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
+
+            // Apply 按钮（主色）
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
+            if (ImGui::Button("Apply", ImVec2(btn_width, 0))) {
                 saveSettings();
                 applySettings();
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(120, 0))) {
+            ImGui::PopStyleColor(3);
+
+            ImGui::SameLine(0, btn_spacing);
+
+            // Reset 按钮（红色）
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+            if (ImGui::Button("Reset", ImVec2(btn_width, 0))) {
+                if (current_camera_index_ >= 0) {
+                    uint8_t cam_id = static_cast<uint8_t>(current_camera_index_);
+                    if (resetCameraParams(cam_id)) {
+                        toast_message = "Reset success!";
+                        toast_start_time = ImGui::GetTime();
+                        show_toast = true;
+                    } else {
+                        toast_message = "Reset failed!";
+                        toast_start_time = ImGui::GetTime();
+                        show_toast = true;
+                    }
+                }
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::SameLine(0, btn_spacing);
+
+            if (ImGui::Button("Close", ImVec2(btn_width, 0))) {
                 show_config_ = false;
             }
         }
@@ -1250,6 +1369,11 @@ namespace viewer {
     }
 
     void Application::applySettings() {
+        if (!ensureXuAvailable()) {
+            addLog("[Apply] XU not available, settings not applied\n");
+            return;
+        }
+
         if (!video_settings_.empty() && !config_.streams.empty()) {
             syncStreamFromVideoSettings(0, video_settings_[0], config_.streams[0]);
         }

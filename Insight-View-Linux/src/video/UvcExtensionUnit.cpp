@@ -52,6 +52,7 @@ UvcExtensionUnit::~UvcExtensionUnit() { close(); }
 
 bool UvcExtensionUnit::open(const std::string& devicePath) {
     close();
+    device_path_ = devicePath;
     fd_ = ::open(devicePath.c_str(), O_RDWR);
     if (fd_ < 0) {
         perror("open UVC device");
@@ -65,6 +66,12 @@ bool UvcExtensionUnit::open(const std::string& devicePath) {
         return false;
     }
     return true;
+}
+
+bool UvcExtensionUnit::reopen() {
+    if (isOpen()) return true;
+    if (device_path_.empty()) return false;
+    return open(device_path_);
 }
 
 void UvcExtensionUnit::close() {

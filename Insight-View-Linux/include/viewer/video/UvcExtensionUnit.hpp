@@ -42,6 +42,7 @@ public:
     bool open(const std::string& devicePath);
     void close();
     bool isOpen() const;
+    bool reopen();
 
     bool getActiveCamera(uint8_t& camId) const;
     bool setActiveCamera(uint8_t camId) const;
@@ -53,6 +54,7 @@ public:
 private:
     int fd_ = -1;
     uint8_t unitId_ = kXuUnitId;
+    std::string device_path_;
 };
 
 void printParams(const camera_params& params);
