@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <fstream>
 #include <GL/gl.h>  // 添加 OpenGL 类型
 #include <turbojpeg.h>
 #include <mutex>
@@ -89,12 +90,12 @@ namespace viewer {
             float x, y, w, h;
         };
         struct UILayout {
-            LayoutRect leftGrey   = {0.0f, 25.0f, 295.0f, 345.0f};
-            LayoutRect rightGrey  = {0.0f, 370.0f, 295.0f, 345.0f};
-            LayoutRect rgb        = {295.0f, 25.0f, 340.0f, 600.0f};
-            LayoutRect depth      = {635.0f, 25.0f, 295.0f, 345.0f};
-            LayoutRect sensor     = {295.0f, 625.0f, 800.0f, 90.0f};
-            LayoutRect config     = {930.0f, 25.0f, 350.0f, 690.0f};
+            LayoutRect leftGrey   = {0.0f, 25.0f, 275.0f, 345.0f};
+            LayoutRect rightGrey  = {0.0f, 370.0f, 275.0f, 345.0f};
+            LayoutRect rgb        = {280.0f, 25.0f, 325.0f, 600.0f};
+            LayoutRect depth      = {605.0f, 25.0f, 280.0f, 345.0f};
+            LayoutRect sensor     = {280.0f, 625.0f, 1000.0f, 90.0f};
+            LayoutRect config     = {885.0f, 25.0f, 395.0f, 690.0f};
             LayoutRect settings   = {0.0f, 25.0f, 1280.0f, 690.0f};
             LayoutRect log        = {0.0f, 405.0f, 1280.0f, 315.0f};
         };
@@ -129,9 +130,18 @@ namespace viewer {
 
         std::chrono::steady_clock::time_point last_frame_time_ = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point last_reconnect_attempt_ = std::chrono::steady_clock::time_point::min();
+        std::vector<float> video_fps_;              // 当前显示的平均帧率
+        std::vector<int> frame_counter_;            // 每秒内累计的帧数
+        std::vector<std::chrono::steady_clock::time_point> fps_timer_; // 上一秒的时间点
+        std::vector<float> sensor_freq_;               // 当前显示的平均频率
+        std::vector<int> sensor_counter_;              // 每秒内累计的接收次数
+        std::vector<std::chrono::steady_clock::time_point> sensor_timer_; // 上一秒的时间点
+        std::chrono::steady_clock::time_point last_sensor_freq_time_;
 
         // 私有方法
         void renderUI();
+        void updateAverageFps();
+        void updateSensorFreq();
         void renderLogWindow(float scaleX, float scaleY);
         void renderConfigWindow(float scaleX, float scaleY);
         void updateTexture(const CompressedFrame& frame, size_t index);
@@ -148,5 +158,12 @@ namespace viewer {
         bool resetCameraParams(uint8_t cam_id);
         bool ensureXuAvailable();
         void ShowToast();
-    };
+        void toggleTestInfoSave();
+        void updateTestInfoSave();
+
+        // 测试数据保存相关
+        bool saving_test_info_ = false;
+        std::ofstream test_info_file_;
+        std::chrono::steady_clock::time_point test_save_timer_ = std::chrono::steady_clock::now();
+        };
 } // namespace viewer

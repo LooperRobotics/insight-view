@@ -33,6 +33,7 @@ add_executable(Insight_Viewer
     src/video/V4l2VideoSource.cpp
     src/sensor/MockHidSensor.cpp
     src/sensor/HidapiSensor.cpp
+    third_party/imgui/backends/imgui_impl_opengl2.cpp
 )
 
 # add_library(imgui STATIC

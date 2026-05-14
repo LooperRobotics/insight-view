@@ -1,6 +1,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
-#include "imgui_impl_opengl3.h"
+// #include "imgui_impl_opengl3.h"
+#include "imgui_impl_opengl2.h"
 #include <SDL.h>
 #include <GL/gl.h>
 #include <dlfcn.h>
@@ -19,9 +20,23 @@
 #include "viewer/core/Time.hpp"
 #include "viewer/video/UvcExtensionUnit.hpp"
 #include <fstream>
+#include <iomanip>
+#include <ctime>
 // #include "viewer/video/V4l2VideoSource.hpp"
 // #include "viewer/sensor/HidapiSensor.hpp"
 
+static void drawTextWithOutline(ImDrawList* drawList, const ImVec2& pos, const char* text,
+                                 ImU32 colorOutline = IM_COL32(0, 0, 0, 255),
+                                 ImU32 colorFill = IM_COL32(255, 255, 255, 255),
+                                 int outlineOffset = 1) {
+    // 四个方向绘制黑色描边
+    drawList->AddText(ImVec2(pos.x - outlineOffset, pos.y), colorOutline, text);
+    drawList->AddText(ImVec2(pos.x + outlineOffset, pos.y), colorOutline, text);
+    drawList->AddText(ImVec2(pos.x, pos.y - outlineOffset), colorOutline, text);
+    drawList->AddText(ImVec2(pos.x, pos.y + outlineOffset), colorOutline, text);
+    // 绘制本体文字（白色）
+    drawList->AddText(pos, colorFill, text);
+}
 
 // 将角度标准化为有效档位：-90, 0, 90, 180
 static int normalizeRotationAngle(float angleDeg) {
@@ -364,6 +379,32 @@ void syncStreamFromVideoSettings(size_t streamIndex, const viewer::Application::
     stream.rotation = vs.rotation;
 }
 
+float unmapControlValue(float value, float srcMin, float srcMax, float dstMin, float dstMax) {
+    if (dstMax == dstMin) {
+        return srcMin;
+    }
+    const float ratio = (value - dstMin) / (dstMax - dstMin);
+    return srcMin + ratio * (srcMax - srcMin);
+}
+
+void syncVideoSettingsFromCameraParams(size_t streamIndex, const viewer::camera_params& params, viewer::Application::VideoSettings& vs) {
+    vs.resolution_index = params.resolution;
+    vs.fps = params.frame_rate;
+    vs.exposure_time = unmapControlValue(params.exposure_time, 0.1f, 10000.0f, 0.0f, 0.03f);
+    vs.exposure_gain = unmapControlValue(params.exposure_gain, 1.0f, 10000.0f, 1.0f, 16.0f);
+    vs.backlight_comp = params.backlight_comp != 0;
+    vs.brightness = unmapControlValue(params.brightness, -64.0f, 64.0f, 0.0f, 127.0f);
+    vs.contrast = unmapControlValue(params.contrast, 0.0f, 100.0f, 0.0f, 1.9f);
+    vs.gamma_dark = unmapControlValue(params.gamma_dark, 100.0f, 500.0f, 1.0f, 4.0f);
+    vs.hue = unmapControlValue(params.hue, -180.0f, 180.0f, 0.0f, 87.0f);
+    vs.saturation = unmapControlValue(params.saturation, 0.0f, 100.0f, 0.0f, 1.999f);
+    vs.sharpness = unmapControlValue(static_cast<float>(params.sharpness), 0.0f, 100.0f, 1.0f, 255.0f);
+    vs.auto_white_balance = params.auto_white_balance != 0;
+    vs.white_balance = unmapControlValue(params.white_balance, 2800.0f, 6500.0f, 1.0f, 3.0f);
+    vs.decimation = unmapControlValue(static_cast<float>(params.decimation), 1.0f, 8.0f, 1.0f, 255.0f);
+    vs.rotation = unmapControlValue(static_cast<float>(params.rotation), -90.0f, 180.0f, 1.0f, 255.0f);
+}
+
 viewer::camera_params toCameraParams(uint8_t camId, const viewer::Application::VideoSettings& vs) {
     viewer::camera_params params{};
     params.cam_id = camId;
@@ -465,6 +506,15 @@ namespace viewer {
             return false;
         }
 
+        size_t num_sources = 3;
+        video_fps_.assign(num_sources, 0.0f);
+        frame_counter_.assign(num_sources, 0);
+        fps_timer_.assign(num_sources, std::chrono::steady_clock::now());
+        sensor_freq_.resize(2, 0.0f);
+        sensor_counter_.resize(2, 0);
+        sensor_timer_.resize(2, std::chrono::steady_clock::now());
+        last_sensor_freq_time_ = std::chrono::steady_clock::now();
+
         insight9_receive_register_image_callback(on_image, this);
         insight9_receive_register_imu_callback(on_imu, this);
         insight9_receive_register_vio_callback(on_vio, this);
@@ -498,9 +548,9 @@ namespace viewer {
         // 初始化 ImGui
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
-        ImGui::GetIO().FontGlobalScale = 1.5f;
         ImGui_ImplSDL2_InitForOpenGL(window_, gl_context_);
-        ImGui_ImplOpenGL3_Init("#version 130");
+        ImGui_ImplOpenGL2_Init();
+        // ImGui_ImplOpenGL3_Init("#version 130");
 
         // 创建纹理句柄；具体存储在首帧到来时按实际尺寸分配
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -525,8 +575,6 @@ namespace viewer {
     }
 
     void Application::run() {
-        auto interval_imu = std::chrono::milliseconds(1000 / 400);
-        auto interval_vio = std::chrono::milliseconds(1000 / 30);
         while (running_) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -554,17 +602,22 @@ namespace viewer {
                         addLog("[Reconnect] SDK restarted successfully\n");
                         last_frame_time_ = std::chrono::steady_clock::now();
                         xu_controller_.reset();
-                    initializeXuController();
+                        initializeXuController();
                     }
                 }
             }
 
             // 开始 ImGui 帧
-            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplOpenGL2_NewFrame();
             ImGui_ImplSDL2_NewFrame();
             ImGui::NewFrame();
 
             // 菜单栏等
+            ImGui::PushStyleColor(ImGuiCol_MenuBarBg, IM_COL32(255, 255, 255, 255));
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(255, 255, 255, 255));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 0, 0, 255));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(220, 220, 220, 255));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(200, 200, 200, 255));
             if (ImGui::BeginMainMenuBar()) {
                 if (ImGui::BeginMenu("File")) {
                     if (ImGui::MenuItem("Quit")) running_ = false;
@@ -575,7 +628,6 @@ namespace viewer {
                     ImGui::MenuItem("Sensor Window", NULL, &show_sensor_window_);
                     ImGui::MenuItem("Log Window", NULL, &show_log_window_);
                     ImGui::MenuItem("Camera Setting", NULL, &show_config_);
-                    // 可以添加其他窗口的切换项
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Tools")) {
@@ -584,6 +636,7 @@ namespace viewer {
                 }
                 ImGui::EndMainMenuBar();
             }
+            ImGui::PopStyleColor(5);
 
             // 渲染所有 UI
             renderUI();
@@ -593,7 +646,7 @@ namespace viewer {
             glViewport(0, 0, 1280, 720);
             glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
             SDL_GL_SwapWindow(window_);
         }
     }
@@ -619,7 +672,7 @@ namespace viewer {
             xu_controller_.reset();
         }
         
-        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplOpenGL2_Shutdown();
         ImGui_ImplSDL2_Shutdown();
         ImGui::DestroyContext();
 
@@ -668,6 +721,12 @@ namespace viewer {
         printf("XU control ready on %s\n", xu_device_path_.c_str());
 
         saveInitialCameraParams();
+        if (initial_params_.size() > 0 && initial_params_[0].cam_id == 0 && video_settings_.size() > 0) {
+            syncVideoSettingsFromCameraParams(0, initial_params_[0], video_settings_[0]);
+        }
+        if (initial_params_.size() > 1 && initial_params_[1].cam_id == 1 && video_settings_.size() > 1) {
+            syncVideoSettingsFromCameraParams(1, initial_params_[1], video_settings_[1]);
+        }
 
         return true;
     }
@@ -687,6 +746,7 @@ namespace viewer {
             camera_params params;
             if (xu_controller_->readCameraParams(cam_id, params)) {
                 initial_params_[cam_id] = params;
+                initial_params_[cam_id].rotation = 90;
                 addLog("[Init] Saved initial params for camera %d\n", cam_id);
                 printParams(params);
             } else {
@@ -740,6 +800,10 @@ namespace viewer {
                           uint64_t timestamp, uint64_t right_timestamp) {
         // 注意：此回调在采集线程中执行，需要加锁保护纹理数据和队列
         std::lock_guard<std::mutex> lock(img_mutex_);  // 需要新增 img_mutex_
+        
+        if (cam_id >= 0 && cam_id < (int)frame_counter_.size()) {
+            frame_counter_[cam_id]++;
+        }
 
         if (cam_id == 0) {
             // RGB MJPEG 直接存储
@@ -823,6 +887,7 @@ namespace viewer {
         latest_imu_.device_ts_ns = (uint64_t)timestamp * 1000; // 假设微秒转纳秒
         latest_imu_.host_ts_ns = viewer::nowNs();
         latest_imu_.valid = true;
+        sensor_counter_[0]++;
     }
 
     void Application::onVio(float px, float py, float pz,
@@ -838,6 +903,7 @@ namespace viewer {
         latest_vio_.orientation_xyzw[3] = qw;
         latest_vio_.host_ts_ns = viewer::nowNs();
         latest_vio_.valid = true;
+        sensor_counter_[1]++;
     }
 
     void Application::depthToRGB(const uint16_t* depth, int width, int height, std::vector<uint8_t>& rgb) {
@@ -1009,8 +1075,39 @@ namespace viewer {
         drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), line3);
     }
 
+    void Application::updateAverageFps() {
+        auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(img_mutex_); // 复用 img_mutex_
+        for (size_t i = 0; i < video_fps_.size(); ++i) {
+            auto& timer = fps_timer_[i];
+            float dt = std::chrono::duration<float>(now - timer).count();
+            if (dt >= 1.0f) {
+                video_fps_[i] = static_cast<float>(frame_counter_[i]) / dt;
+                frame_counter_[i] = 0;
+                timer = now;
+            }
+        }
+    }
+
+    void Application::updateSensorFreq() {
+        std::lock_guard<std::mutex> lock(sensor_mutex_);
+        auto now = std::chrono::steady_clock::now();
+        for (int i = 0; i < 2; ++i) {
+            auto& timer = sensor_timer_[i];
+            float dt = std::chrono::duration<float>(now - timer).count();
+            if (dt >= 1.0f) {
+                sensor_freq_[i] = static_cast<float>(sensor_counter_[i]) / dt;
+                sensor_counter_[i] = 0;
+                timer = now;
+            }
+        }
+    }
+
     void Application::renderUI() {
         flushPendingLogs();
+        updateAverageFps();
+        updateSensorFreq();
+        updateTestInfoSave();
         ImVec2 screenSize = ImGui::GetIO().DisplaySize;
         if (screenSize.x < 1.0f || screenSize.y < 1.0f) {
             screenSize = ImVec2(1280.0f, 720.0f);
@@ -1019,6 +1116,10 @@ namespace viewer {
         const float baseHeight = 720.0f;
         const float scaleX = screenSize.x / baseWidth;
         const float scaleY = screenSize.y / baseHeight;
+
+        // 根据屏幕分辨率调整字体大小
+        const float fontScale = std::min(scaleX, scaleY);
+        ImGui::GetIO().FontGlobalScale = 1.5f * fontScale;
 
         // 视频窗口
         if (show_video_window_) {
@@ -1050,9 +1151,17 @@ namespace viewer {
                                    last_video_frame_times_[i].time_since_epoch().count() != 0 &&
                                    (std::chrono::steady_clock::now() - last_video_frame_times_[i]) <= std::chrono::seconds(3));
 
+                int w = textures_[i].width;
+                int h = textures_[i].height;
+                char title[128];
+                if (w > 0 && h > 0) {
+                    snprintf(title, sizeof(title), "%s(%dx%d)", cam_names[i], w, h);
+                } else {
+                    snprintf(title, sizeof(title), "%s", cam_names[i]);
+                }
                 ImGui::SetNextWindowPos(positions[i], lock_windows_ ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowSize(size[i], lock_windows_ ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
-                ImGui::Begin(cam_names[i]);
+                ImGui::Begin(title);
                 GLuint texId = textures_[i].id;
                 if (hasRecentFrame && texId != 0 && textures_[i].width > 0 && textures_[i].height > 0) {
                     // 按比例显示图像（与原来相同）
@@ -1071,13 +1180,34 @@ namespace viewer {
 
                     if (timestamps_[i] != 0) {
                         ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                        // char fps_str[32];
+                        // float fps_to_show = (i == 0 ? video_fps_[0] : video_fps_[1]);
+                        // snprintf(fps_str, sizeof(fps_str), "FPS: %.1f", fps_to_show);
+                        // ImVec2 fps_size = ImGui::CalcTextSize(fps_str);
                         char ts_str[64];
-                        snprintf(ts_str, sizeof(ts_str), "T: %" PRIu64, timestamps_[i]);
-                        ImVec2 text_size = ImGui::CalcTextSize(ts_str);
-                        ImVec2 text_pos = ImVec2(imagePos.x + imageSize.x - text_size.x - 10, imagePos.y + 10);
-                        draw_list->AddRectFilled(text_pos, ImVec2(text_pos.x + text_size.x + 6, text_pos.y + text_size.y + 6),
-                                                IM_COL32(0, 0, 0, 128));
-                        draw_list->AddText(ImVec2(text_pos.x + 3, text_pos.y + 3), IM_COL32(255, 255, 255, 255), ts_str);
+                        bool has_ts = (timestamps_[i] != 0);
+                        if (has_ts) {
+                            snprintf(ts_str, sizeof(ts_str), "T: %lu", timestamps_[i]);
+                        }
+                        ImVec2 ts_size = has_ts ? ImGui::CalcTextSize(ts_str) : ImVec2(0,0);
+
+                        float right_x = imagePos.x + imageSize.x - 10;
+                        float top_y = imagePos.y + 10;
+
+                        // ImVec2 fps_pos(right_x - fps_size.x, top_y);
+                        // drawTextWithOutline(draw_list, fps_pos, fps_str);
+
+                        if (has_ts) {
+                            ImVec2 ts_pos(right_x - ts_size.x, top_y);
+                            drawTextWithOutline(draw_list, ts_pos, ts_str);
+                        }
+                        // char ts_str[64];
+                        // snprintf(ts_str, sizeof(ts_str), "T: %" PRIu64, timestamps_[i]);
+                        // ImVec2 text_size = ImGui::CalcTextSize(ts_str);
+                        // ImVec2 text_pos = ImVec2(imagePos.x + imageSize.x - text_size.x - 10, imagePos.y + 10);
+                        // draw_list->AddRectFilled(text_pos, ImVec2(text_pos.x + text_size.x + 6, text_pos.y + text_size.y + 6),
+                        //                         IM_COL32(0, 0, 0, 128));
+                        // draw_list->AddText(ImVec2(text_pos.x + 3, text_pos.y + 3), IM_COL32(255, 255, 255, 255), ts_str);
                     }
                 } else {
                     renderCameraStatus(hasRecentFrame, cam_names[i]);
@@ -1090,7 +1220,15 @@ namespace viewer {
         if (show_depth_window_) {
             ImGui::SetNextWindowPos(ImVec2(kUILayout.depth.x * scaleX, kUILayout.depth.y * scaleY), lock_windows_ ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(kUILayout.depth.w * scaleX, kUILayout.depth.h * scaleY), lock_windows_ ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
-            ImGui::Begin("Depth Map", &show_depth_window_);
+            int depth_w = textures_[3].width;
+            int depth_h = textures_[3].height;
+            char depth_title[128];
+            if (depth_w > 0 && depth_h > 0) {
+                snprintf(depth_title, sizeof(depth_title), "Depth Map (%dx%d)", depth_w, depth_h);
+            } else {
+                snprintf(depth_title, sizeof(depth_title), "Depth Map");
+            }
+            ImGui::Begin(depth_title);
             {
                 CompressedFrame local_frame;
                 bool has_frame = false;
@@ -1114,7 +1252,38 @@ namespace viewer {
                                    (std::chrono::steady_clock::now() - last_video_frame_times_[3]) <= std::chrono::seconds(3));
             GLuint texId = textures_[3].id;
             if (hasRecentFrame && texId != 0 && textures_[3].width > 0 && textures_[3].height > 0) {
-                ImGui::Image((void*)(intptr_t)texId, ImVec2(textures_[3].width, textures_[3].height));
+                ImVec2 winSize = ImGui::GetContentRegionAvail();
+                float aspect = (float)textures_[3].width / (float)textures_[3].height;
+                ImVec2 imageSize;
+                if (winSize.x / aspect < winSize.y) {
+                    imageSize.x = winSize.x;
+                    imageSize.y = winSize.x / aspect;
+                } else {
+                    imageSize.y = winSize.y;
+                    imageSize.x = winSize.y * aspect;
+                }
+                ImVec2 imagePos = ImGui::GetCursorScreenPos();
+                ImGui::Image((void*)(intptr_t)texId, imageSize);
+
+                // 绘制 FPS 和时间戳（带黑色描边）
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                // char fps_str[32];
+                // snprintf(fps_str, sizeof(fps_str), "FPS: %.1f", video_fps_[2]);
+                // ImVec2 fps_size = ImGui::CalcTextSize(fps_str);
+                
+                char ts_str[64];
+                bool has_ts = (timestamps_[3] != 0);
+                if (has_ts) {
+                    snprintf(ts_str, sizeof(ts_str), "T: %lu", timestamps_[3]);
+                }
+                ImVec2 ts_size = has_ts ? ImGui::CalcTextSize(ts_str) : ImVec2(0, 0);
+
+                float right_x = imagePos.x + imageSize.x - 10;
+                float top_y = imagePos.y + 10;
+                // drawTextWithOutline(draw_list, ImVec2(right_x - fps_size.x, top_y), fps_str);
+                if (has_ts) {
+                    drawTextWithOutline(draw_list, ImVec2(right_x - ts_size.x, top_y), ts_str);
+                }
             } else {
                 renderCameraStatus(hasRecentFrame, "Depth Camera");
             }
@@ -1132,6 +1301,7 @@ namespace viewer {
             ImGui::Text("VIO: pos=(%f,%f,%f) ori=(%f %f %f %f)",
                         latest_vio_.position[0], latest_vio_.position[1], latest_vio_.position[2],
                         latest_vio_.orientation_xyzw[0], latest_vio_.orientation_xyzw[1], latest_vio_.orientation_xyzw[2], latest_vio_.orientation_xyzw[3]);
+            // ImGui::Text("Sensor Frequencies: IMU HW=%.1f Hz| VIO HW=%.1f Hz", sensor_freq_[0], sensor_freq_[1]);
             ImGui::End();
         }
 
@@ -1150,12 +1320,10 @@ namespace viewer {
             ImGui::Begin("Settings", &show_settings_);  // 第二个参数为关闭窗口时自动置 false
             ImGui::Text("Adjust settings...");
 
-            ImGui::Checkbox("Lock Window Position/Size", &lock_windows_);
-            // if (ImGui::Button("Save Screenshot")) {
-            //     // 在这里调用截图函数，例如 saveScreenshot();
-            //     // saveScreenshot();
-            //     printf("嘻嘻~\n");
-            // }
+            // ImGui::Checkbox("Lock Window Position/Size", &lock_windows_);
+            if (ImGui::Button(saving_test_info_ ? "stop saving" : "Save test info")) {
+                toggleTestInfoSave();
+            }
             // ImGui::SameLine();  // 使下一个按钮在同一行
             if (ImGui::Button("Close")) {
                 show_settings_ = false;
@@ -1237,7 +1405,7 @@ namespace viewer {
                         ImGui::SliderFloat("Gamma_Dark", &vs.gamma_dark, 100.0f, 500.0f);
                         ImGui::SliderFloat("hue", &vs.hue, -180.0f, 180.0f);
                         ImGui::SliderFloat("Saturation", &vs.saturation, 0.0f, 100.0f);
-                        ImGui::SliderFloat("Sharpness", &vs.sharpness, 0.0f, 100.0f);
+                        // ImGui::SliderFloat("Sharpness", &vs.sharpness, 0.0f, 100.0f);
                         ImGui::Checkbox("Enable Auto White Balance", &vs.auto_white_balance);
                         ImGui::SliderFloat("White_Balance", &vs.white_balance, 2800.0f, 6500.0f);
                     }
@@ -1246,8 +1414,8 @@ namespace viewer {
                     // Post-Processing（蓝色）
                     pushHeaderColor(ImVec4(0.3f, 0.5f, 0.8f, 1.0f));
                     if (ImGui::CollapsingHeader("Post-Processing", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        ImGui::SliderFloat("Decimation Filter", &vs.decimation, 1.0f, 8.0f);
-                        ImGui::SliderFloat("Rotation Filter", &vs.rotation, -90.0f, 180.0f);
+                        // ImGui::SliderFloat("Decimation", &vs.decimation, 1.0f, 8.0f);
+                        ImGui::SliderFloat("Rotation", &vs.rotation, -90.0f, 180.0f);
                         if (ImGui::IsItemDeactivatedAfterEdit()) {
                             // 拖拽结束后，将角度标准化并更新显示
                             int normalized = normalizeRotationAngle(vs.rotation);
@@ -1304,6 +1472,9 @@ namespace viewer {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
             if (ImGui::Button("Apply", ImVec2(btn_width, 0))) {
+                if (initial_params_.empty()) {
+                    saveInitialCameraParams();
+                }
                 saveSettings();
                 applySettings();
             }
@@ -1319,6 +1490,21 @@ namespace viewer {
                 if (current_camera_index_ >= 0) {
                     uint8_t cam_id = static_cast<uint8_t>(current_camera_index_);
                     if (resetCameraParams(cam_id)) {
+                        if (cam_id < initial_params_.size() && initial_params_[cam_id].cam_id == cam_id) {
+                            syncVideoSettingsFromCameraParams(cam_id, initial_params_[cam_id], video_settings_[cam_id]);
+                            if (cam_id == 0) {
+                                if (!config_.streams.empty()) {
+                                    syncStreamFromVideoSettings(0, video_settings_[0], config_.streams[0]);
+                                }
+                            } else {
+                                if (config_.streams.size() > 1) {
+                                    syncStreamFromVideoSettings(1, video_settings_[1], config_.streams[1]);
+                                }
+                                if (config_.streams.size() > 2) {
+                                    syncStreamFromVideoSettings(1, video_settings_[1], config_.streams[2]);
+                                }
+                            }
+                        }
                         toast_message = "Reset success!";
                         toast_start_time = ImGui::GetTime();
                         show_toast = true;
@@ -1348,6 +1534,8 @@ namespace viewer {
             return;
         }
 
+        bool copy_requested = ImGui::Button("Copy");
+        ImGui::SameLine();
         if (ImGui::Button("Clear")) {
             std::lock_guard<std::mutex> lock(g_log_mutex);
             g_log_lines.clear();
@@ -1355,6 +1543,10 @@ namespace viewer {
         ImGui::SameLine();
         ImGui::Checkbox("Auto-scroll", &auto_scroll_log_);
         ImGui::Separator();
+
+        if (copy_requested) {
+            ImGui::LogToClipboard();
+        }
 
         ImGui::BeginChild("LogScrollArea", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
         for (const auto& line : g_log_lines) {
@@ -1543,5 +1735,161 @@ namespace viewer {
         // 绘制文字（居中）
         ImVec2 text_pos(pos.x + padding_x, pos.y + padding_y);
         draw_list->AddText(text_pos, IM_COL32(255, 255, 255, 255), toast_message.c_str());
+    }
+
+    void Application::toggleTestInfoSave() {
+        if (saving_test_info_) {
+            // 停止保存
+            if (test_info_file_.is_open()) {
+                test_info_file_.close();
+            }
+            saving_test_info_ = false;
+            toast_message = "Test info save stopped";
+            toast_start_time = ImGui::GetTime();
+            show_toast = true;
+        } else {
+            // 开始保存
+            auto now = std::time(nullptr);
+            auto* timeinfo = std::localtime(&now);
+            char filename[256];
+            std::strftime(filename, sizeof(filename), "test_info_%Y%m%d_%H%M%S.txt", timeinfo);
+            
+            test_info_file_.open(filename, std::ios::app);
+            if (test_info_file_.is_open()) {
+                saving_test_info_ = true;
+                test_save_timer_ = std::chrono::steady_clock::now();
+                toast_message = "Test info save started: " + std::string(filename);
+                toast_start_time = ImGui::GetTime();
+                show_toast = true;
+            } else {
+                toast_message = "Failed to open test info file";
+                toast_start_time = ImGui::GetTime();
+                show_toast = true;
+            }
+        }
+    }
+
+    void Application::updateTestInfoSave() {
+        if (!saving_test_info_ || !test_info_file_.is_open()) {
+            return;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - test_save_timer_).count();
+        if (dt < 1.0f) {
+            return;  // 还没到 1 秒
+        }
+
+        test_save_timer_ = now;
+
+        // 获取当前系统时间
+        auto time_now = std::time(nullptr);
+        auto* timeinfo = std::localtime(&time_now);
+        char time_str[32];
+        std::strftime(time_str, sizeof(time_str), "%H:%M:%S", timeinfo);
+
+        // 写入时间标记
+        test_info_file_ << "Time: " << time_str << "\n";
+
+        // RGB 摄像头信息
+        if (textures_.size() > 0) {
+            // test_info_file_ << "  RGB\t\tFPS:\t" << std::fixed << std::setprecision(1) << video_fps_[0];
+            // test_info_file_ << "\t\tResolution: " << textures_[0].width << "x" << textures_[0].height;
+            // if (timestamps_.size() > 0 && timestamps_[0] != 0) {
+            //     test_info_file_ << "\tTime:" << timestamps_[0];
+            // }
+            // test_info_file_ << "\n";
+            test_info_file_ << "  RGB\t\tResolution: " << textures_[0].width << "x" << textures_[0].height;
+            if (timestamps_.size() > 0 && timestamps_[0] != 0) {
+                test_info_file_ << "\tTime:" << timestamps_[0];
+            }
+            test_info_file_ << "\n";
+        }
+
+        // GERY_L 摄像头信息（灰度左）
+        if (textures_.size() > 1) {
+            // test_info_file_ << "  GERY_L\tFPS:\t" << std::fixed << std::setprecision(1) << video_fps_[1];
+            // test_info_file_ << "\t\tResolution: " << textures_[1].width << "x" << textures_[1].height;
+            // if (timestamps_.size() > 1 && timestamps_[1] != 0) {
+            //     test_info_file_ << "\tTime:" << timestamps_[1];
+            // }
+            // test_info_file_ << "\n";
+            test_info_file_ << "  GERY_L\t\tResolution: " << textures_[1].width << "x" << textures_[1].height;
+            if (timestamps_.size() > 1 && timestamps_[1] != 0) {
+                test_info_file_ << "\tTime:" << timestamps_[1];
+            }
+            test_info_file_ << "\n";
+        }
+
+        // GERY_R 摄像头信息（灰度右）
+        if (textures_.size() > 2) {
+            // test_info_file_ << "  GERY_R\tFPS:\t" << std::fixed << std::setprecision(1) << video_fps_[1];
+            // test_info_file_ << "\t\tResolution: " << textures_[2].width << "x" << textures_[2].height;
+            // if (timestamps_.size() > 2 && timestamps_[2] != 0) {
+            //     test_info_file_ << "\tTime:" << timestamps_[2];
+            // }
+            // test_info_file_ << "\n";
+            test_info_file_ << "  GERY_R\t\tResolution: " << textures_[2].width << "x" << textures_[2].height;
+            if (timestamps_.size() > 2 && timestamps_[2] != 0) {
+                test_info_file_ << "\tTime:" << timestamps_[2];
+            }
+            test_info_file_ << "\n";
+        }
+
+        // DEPTH 摄像头信息
+        if (textures_.size() > 3) {
+            // test_info_file_ << "  DEPTH\t\tFPS:\t" << std::fixed << std::setprecision(1) << video_fps_[2];
+            // test_info_file_ << "\t\tResolution: " << textures_[3].width << "x" << textures_[3].height;
+            // if (timestamps_.size() > 3 && timestamps_[3] != 0) {
+            //     test_info_file_ << "\tTime:" << timestamps_[3];
+            // }
+            // test_info_file_ << "\n";
+            test_info_file_ << "  DEPTH\t\tResolution: " << textures_[3].width << "x" << textures_[3].height;
+            if (timestamps_.size() > 3 && timestamps_[3] != 0) {
+                test_info_file_ << "\tTime:" << timestamps_[3];
+            }
+            test_info_file_ << "\n";
+        }
+
+        // VIO 信息
+        // test_info_file_ << "  VIO\t\tHW: " << std::fixed << std::setprecision(1) << sensor_freq_[1] << "HZ";
+        // test_info_file_ << std::fixed << std::setprecision(6)
+        //         << " pos: (" << latest_vio_.position[0] << ","
+        //         << latest_vio_.position[1] << ","
+        //         << latest_vio_.position[2] << ")"
+        //         << " ori: (" << latest_vio_.orientation_xyzw[0] << ","
+        //         << latest_vio_.orientation_xyzw[1] << ","
+        //         << latest_vio_.orientation_xyzw[2] << ","
+        //         << latest_vio_.orientation_xyzw[3] << ")";
+        // test_info_file_ << "\n";
+        test_info_file_ << "  VIO\t\t" << std::fixed << std::setprecision(6)
+                << "pos: (" << latest_vio_.position[0] << ","
+                << latest_vio_.position[1] << ","
+                << latest_vio_.position[2] << ")"
+                << " ori: (" << latest_vio_.orientation_xyzw[0] << ","
+                << latest_vio_.orientation_xyzw[1] << ","
+                << latest_vio_.orientation_xyzw[2] << ","
+                << latest_vio_.orientation_xyzw[3] << ")";
+        test_info_file_ << "\n";
+
+        // IMU 信息
+        // test_info_file_ << "  IMU\t\tHW: " << std::fixed << std::setprecision(1) << sensor_freq_[0] << "HZ";
+        // test_info_file_ << std::fixed << std::setprecision(6)
+        //         << " accel: (" << latest_imu_.accel[0] << ","
+        //         << latest_imu_.accel[1] << ","
+        //         << latest_imu_.accel[2] << ")";
+        // test_info_file_ << std::fixed << std::setprecision(6)
+        //         << " gyro: (" << latest_imu_.gyro[0] << "," << latest_imu_.gyro[1] << "," << latest_imu_.gyro[2] << ")";
+        // test_info_file_ << "\n";
+        test_info_file_ << "  IMU\t\t" << std::fixed << std::setprecision(6)
+                << "accel: (" << latest_imu_.accel[0] << ","
+                << latest_imu_.accel[1] << ","
+                << latest_imu_.accel[2] << ")";
+        test_info_file_ << std::fixed << std::setprecision(6)
+                << " gyro: (" << latest_imu_.gyro[0] << "," << latest_imu_.gyro[1] << "," << latest_imu_.gyro[2] << ")";
+        test_info_file_ << "\n";
+
+        test_info_file_ << "----------------------------------------------------------------------------\n";
+        test_info_file_.flush();
     }
 } // namespace viewer
