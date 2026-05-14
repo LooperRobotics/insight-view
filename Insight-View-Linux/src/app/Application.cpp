@@ -1814,7 +1814,7 @@ namespace viewer {
             //     test_info_file_ << "\tTime:" << timestamps_[1];
             // }
             // test_info_file_ << "\n";
-            test_info_file_ << "  GERY_L\t\tResolution: " << textures_[1].width << "x" << textures_[1].height;
+            test_info_file_ << "  GERY_L\tResolution: " << textures_[1].width << "x" << textures_[1].height;
             if (timestamps_.size() > 1 && timestamps_[1] != 0) {
                 test_info_file_ << "\tTime:" << timestamps_[1];
             }
@@ -1829,7 +1829,7 @@ namespace viewer {
             //     test_info_file_ << "\tTime:" << timestamps_[2];
             // }
             // test_info_file_ << "\n";
-            test_info_file_ << "  GERY_R\t\tResolution: " << textures_[2].width << "x" << textures_[2].height;
+            test_info_file_ << "  GERY_R\tResolution: " << textures_[2].width << "x" << textures_[2].height;
             if (timestamps_.size() > 2 && timestamps_[2] != 0) {
                 test_info_file_ << "\tTime:" << timestamps_[2];
             }
