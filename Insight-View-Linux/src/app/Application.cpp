@@ -1399,7 +1399,7 @@ namespace viewer {
                     if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
                         ImGui::SliderFloat("Exposure Time", &vs.exposure_time, 0.1f, 10000.0f);
                         ImGui::SliderFloat("Exposure Gain", &vs.exposure_gain, 1.0f, 10000.0f);
-                        ImGui::Checkbox("Backlight Compensation", &vs.backlight_comp);
+                        ImGui::Checkbox("Enable Auto Exposure", &vs.backlight_comp);
                         ImGui::SliderFloat("Brightness", &vs.brightness, -64.0f, 64.0f);
                         ImGui::SliderFloat("Contrast", &vs.contrast, 0.0f, 100.0f);
                         ImGui::SliderFloat("Gamma_Dark", &vs.gamma_dark, 100.0f, 500.0f);
