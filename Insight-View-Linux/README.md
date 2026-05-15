@@ -1,97 +1,81 @@
-# uvc-viewer
+# Insight Viewer Linux
 
-Linux-first mock-first UVC/HID debugging viewer skeleton.
+This directory contains the Linux executable for the Insight Viewer application, along with its default configuration file and helper scripts for managing runtime dependencies and launching the program. The application is designed for debugging UVC video streams, IMU/VIO data, and HID sensor data.
 
-## Quick start
+## Table of Contents
 
-```bash
-cd /home/ubuntu/.openclaw/workspace/uvc-viewer
-chmod +x scripts/bootstrap_linux.sh
-./scripts/bootstrap_linux.sh
-sudo ./build/Insight_Viewer
-```
+- [Directory Structure](#directory-structure)
+- [Prerequisites](#prerequisites)
+- [Running the Application](#running-the-application)
+- [Configuration File](#configuration-file)
+- [Important Notes](#important-notes)
+- [Disclaimer](#disclaimer)
 
-If bootstrap succeeds, build artifacts should appear under `build/`.
+## Directory Structure
 
-## Manual build
+- `bin/Insight_Viewer`: Linux executable binary.
+- `lib/`: Directory containing custom and third-party shared libraries (e.g., `libinsight9.so`, `libturbojpeg.so`, `libhidapi-hidraw.so`).
+- `configs/default.json`: Default runtime configuration file.
+- `run.sh`: Launch script that sets the library path and executes the binary.
+- `install_deps.sh`: Optional script to install missing system packages (e.g., OpenGL, SDL2).
 
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential \
-  cmake \
-  pkg-config \
-  libsdl2-dev \
-  libgl1-mesa-dev \
-  libfmt-dev \
-  libspdlog-dev \
-  nlohmann-json3-dev \
-  libturbojpeg0-dev
+## Prerequisites
 
-cmake -S . -B build
-cmake --build build -j"$(nproc)"
-```
+- A Linux system with a working OpenGL implementation.
+- Access to UVC cameras and HID devices (may require user permissions).
 
-## Compile failure checklist
+## Running the Application
 
-### 1) OpenGL not found
-Symptoms:
-- `Could NOT find OpenGL`
+1. **Make the scripts executable (first time only):**
+   ```bash
+   chmod +x run.sh install_deps.sh
+   ```
 
-Fix:
-```bash
-sudo apt-get install -y libgl1-mesa-dev
-```
+2. **Install required system dependencies (optional but recommended):**
+   ```bash
+   ./install_deps.sh
+   ```
+   This script attempts to install `libgl1-mesa-glx`, `libglu1-mesa`, and `libsdl2-2.0-0` via `apt`. If you are not on a Debian/Ubuntu-based system, install the equivalent packages manually.
 
-### 2) SDL2 not found
-Symptoms:
-- `Could NOT find SDL2`
-- `sdl2.pc not found`
+3. **Launch the viewer:**
+   ```bash
+   sudo ./run.sh
+   ```
+   The script automatically sets `LD_LIBRARY_PATH` to include the bundled `lib/` directory, eliminating the need for additional environment setup.
 
-Fix:
-```bash
-sudo apt-get install -y libsdl2-dev pkg-config
-pkg-config --modversion sdl2
-```
+4. **Specify a custom configuration file (optional):**
+   ```bash
+   ./run.sh ./configs/another_config.json
+   ```
 
-### 3) fmt / spdlog / nlohmann_json not found
-Fix:
-```bash
-sudo apt-get install -y libfmt-dev libspdlog-dev nlohmann-json3-dev
-```
+5. **Run the executable directly (advanced):**
+   If you prefer to run the executable directly, manually set the library path:
+   ```bash
+   export LD_LIBRARY_PATH=./lib:$LD_LIBRARY_PATH
+   sudo ./bin/Insight_Viewer
+   ```
 
-### 4) turbojpeg not found
-Current skeleton does not strictly require runtime decode yet, but install it now for MJPEG work:
-```bash
-sudo apt-get install -y libturbojpeg0-dev
-```
+## Configuration File
 
-### 5) CMake configured before dependencies were installed
-Clear and retry:
-```bash
-rm -rf build
-cmake -S . -B build
-cmake --build build -j"$(nproc)"
-```
+The `configs/default.json` file shares the same structure as the Windows version and includes the following sections:
 
-### 6) Wayland / X11 display issues on remote machine
-If GUI app later builds but cannot launch, first check whether the machine has a graphical session and OpenGL context available.
+- **app**: Application settings, including name, ImGui docking/viewport configuration, and V-sync options.
+- **video.streams**: UVC camera stream configurations, such as VID/PID/interface, resolution, frame rate, and format.
+- **sensor**: HID sensor device details and sampling frequencies.
 
-Useful checks:
-```bash
-echo $DISPLAY
-glxinfo | head
-```
+The provided example is preconfigured for standard Insight devices. Modify the VID/PID/interface values if your hardware setup differs.
 
-### 7) Verify dependency visibility
-```bash
-pkg-config --modversion sdl2 || true
-pkg-config --modversion fmt || true
-pkg-config --modversion spdlog || true
-cmake --version
-g++ --version
-```
+## Important Notes
 
-## Notes
-- This repo is currently a skeleton, not a finished viewer.
+### Graphics and OpenGL
+The application requires a functional OpenGL implementation. Most Linux systems include this by default. If issues arise, install your graphics drivers and the necessary OpenGL packages (`libgl1-mesa-glx`, `libglu1-mesa`).
 
+### Device Access
+To access UVC cameras (`/dev/video*`) and HID devices (`/dev/hidraw*`), your user account may need appropriate permissions. Running with `sudo`.
+
+### Missing Libraries
+The bundled `lib/` directory includes `libturbojpeg.so` and `libhidapi-hidraw.so` to prevent package lookup issues. The `install_deps.sh` script installs only core system libraries (OpenGL, SDL2). If you encounter missing library errors, ensure your distribution has the required OpenGL packages installed.
+
+## Disclaimer
+
+This project is currently a viewer skeleton, intended primarily for debugging and preview purposes. It is not yet a production-ready application. The Linux version mirrors the configuration structure of the Windows version and is suitable for debugging Insight UVC/HID devices in Linux environments.
