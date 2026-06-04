@@ -1,8 +1,13 @@
 {
   "app": {"name": "Insight 9 Viewer", "enable_docking": true, "enable_viewports": true, "vsync": true},
   "video": {"streams": [
-    {"id": "cam0", "mode": "uvc", "vid": 7531, "interface":4, "pid": 260, "width": 1088, "height": 1920, "fps": 30, "format": "MJPEG"},
-    {"id": "cam1", "mode": "uvc", "vid": 7531, "interface":6, "pid": 260, "width": 544, "height": 1281, "fps": 30, "format": "GREY"},
+    {"id": "cam0", "mode": "uvc", "vid": 7531, "interface":4, "pid": 260, "width": 1088, "height": 1920, "fps": 30, "format": "MJPEG",
+        "exposure_time": 6666.701, "exposure_gain": 3187.830, "auto_exposure": true,
+        "brightness": -64.0, "contrast": 52.632, "gamma_dark": 260.0, "hue": -180.0, "saturation": 47.514,
+        "auto_white_balance": true, "white_balance": 4846.924, "rotation": 90},
+    {"id": "cam1", "mode": "uvc", "vid": 7531, "interface":6, "pid": 260, "width": 544, "height": 1281, "fps": 30, "format": "GREY",
+        "exposure_time": 333.43, "exposure_gain": 2000.8, "auto_exposure": true,
+        "brightness": -64.0, "contrast": 52.632, "gamma_dark": 260.0, "rotation": 90},
     {"id": "cam2", "mode": "uvc", "vid": 7531, "interface":8, "pid": 260, "width": 544, "height": 642, "fps": 30, "format": "Z16"}
   ]},
   "sensor": {"mode": "hid", "vid": 7531, "pid": 260, "imu_interface": 0, "vio_interface": 1, "imu_hz": 400, "vio_hz": 30}
